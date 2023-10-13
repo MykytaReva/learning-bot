@@ -1,14 +1,7 @@
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CallbackContext,
-    CallbackQueryHandler,
-    CommandHandler,
-    ConversationHandler,
-    MessageHandler,
-)
+from telegram.ext import ApplicationBuilder, CallbackContext, CommandHandler, ContextTypes, MessageHandler, filters
 
 import constants
 from utils import extract_lat_long_via_address, get_weather
@@ -16,69 +9,62 @@ from utils import extract_lat_long_via_address, get_weather
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 BOT_TOKEN = constants.BOT_TOKEN
-LOCATION_INPUT = 1
-CONFIRMATION = 2
 
 
-async def start(update: Update, context: CallbackContext):
-    context.user_data["location"] = None
-    await update.message.reply_text("Please enter your location or type /cancel to cancel:")
-
-    return LOCATION_INPUT
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hello! Thanks for chatting with me!")
 
 
-async def get_location(update: Update, context: CallbackContext):
-    entered_location = update.message.text
-
-    latitude, longitude, location = extract_lat_long_via_address(entered_location)  # Replace with actual coordinates
-    coordinates = {"lat": latitude, "lng": longitude}
-    if location is None:
-        await update.message.reply_text("Sorry, I couldn't find that location. Please try again:")
-        return LOCATION_INPUT
-    if latitude is not None and longitude is not None:
-        weather = await get_weather(update, context, coordinates)
-        await update.message.reply_text(f"The weather in {location} is {weather['temperature']}°C right now.")
-        keyboard = [
-            [
-                InlineKeyboardButton("Yes", callback_data="yes"),
-                InlineKeyboardButton("No", callback_data="no"),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("Is this your location?", reply_markup=reply_markup)
-        return CONFIRMATION
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("I am Weather/Location bot, please type something so I can respond!")
 
 
-async def confirmation(update: Update, context: CallbackContext):
-    query = update.callback_query
-    user_response = query.data
-
-    if user_response == "yes":
-        await query.message.reply_text("Great! Bye!", reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
-    elif user_response == "no":
-        await query.message.reply_text("Please enter your location again or type /cancel to cancel:")
-        return LOCATION_INPUT
+async def custom_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Custom commands are not implemented yet, sorry!")
 
 
-async def cancel(update: Update, context: CallbackContext):
-    await update.message.reply_text("Location input canceled.", reply_markup=ReplyKeyboardRemove())
-    # Reset the conversation state
-    return ConversationHandler.END
+# responses
+def handle_response(text: str) -> str:
+    processed: str = text.lower()
+
+    if "hello" in processed:
+        return "Hello there!"
+    if "bye" in processed:
+        return "Goodbye!"
+    if "weather" in processed:
+        return "The weather is nice!"
+    return "Sorry, I don't understand you!"
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message_type: str = update.message.chat.type
+    text: str = update.message.text
+
+    logging.info(f"User {update.message.chat.id} in {message_type}: {text}")
+    if message_type == "group" or message_type == "supergroup":
+        if constants.BOT_USERNAME in text:
+            new_text = text.replace(constants.BOT_USERNAME, "").strip()
+            response = handle_response(new_text)
+        else:
+            return None
+    else:
+        response = handle_response(text)
+    await update.message.reply_text(response)
+
+
+async def error(update: Update, context: CallbackContext):
+    """Log Errors caused by Updates."""
+    logging.warning(f"Update {update} caused error {context.error}")
 
 
 if __name__ == "__main__":
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    conversation_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            LOCATION_INPUT: [MessageHandler(None, get_location)],
-            CONFIRMATION: [CallbackQueryHandler(confirmation, pattern="^(yes|no)$")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("custom", custom_command))
 
-    application.add_handler(conversation_handler)
+    application.add_handler(MessageHandler(filters.TEXT, handle_message))
+    application.add_error_handler(error)
 
-    application.run_polling()
+    application.run_polling(pool_timeout=3)
